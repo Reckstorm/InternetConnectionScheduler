@@ -71,6 +71,7 @@ namespace InternetConnectionScheduler
                 {
                     while (Running)
                     {
+                        Thread.Sleep(200);
                         TimeOnly now = TimeOnly.Parse(DateTime.Now.ToLongTimeString());
                         var query = new SelectQuery("Win32_NetworkAdapter");
                         if (_rule.Start == _rule.End) continue;
@@ -83,7 +84,9 @@ namespace InternetConnectionScheduler
                                     foreach (ManagementObject obj in searcher.Get())
                                     {
                                         if (obj["NetEnabled"] != null)
+                                        {
                                             Disable(obj);
+                                        }
                                     }
                                 }
                                 else
@@ -91,7 +94,9 @@ namespace InternetConnectionScheduler
                                     foreach (ManagementObject obj in searcher.Get())
                                     {
                                         if (obj["NetEnabled"] != null && !(bool)obj["NetEnabled"])
+                                        {
                                             Enable(obj);
+                                        }
                                     }
                                 }
                             }
@@ -100,7 +105,6 @@ namespace InternetConnectionScheduler
                         {
                             Console.WriteLine("Error: " + ex.Message);
                         }
-                        Thread.Sleep(200);
                     }
                 });
             }
