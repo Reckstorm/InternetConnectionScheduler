@@ -1,6 +1,7 @@
 using System.Diagnostics;
-using System.Management;
+using System.Net.NetworkInformation;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace InternetConnectionScheduler
 {
@@ -22,6 +23,7 @@ namespace InternetConnectionScheduler
         }
 
         private Rule _rule { get; set; }
+
         public Worker()
         {
             CreateRulesIfMissing();
@@ -51,8 +53,6 @@ namespace InternetConnectionScheduler
             }
             return rule;
         }
-        private void Enable(ManagementObject obj) => obj.InvokeMethod("Enable", null);
-        private void Disable(ManagementObject obj) => obj.InvokeMethod("Disable", null);
 
         private void CheckIfBGRunning()
         {
@@ -73,31 +73,24 @@ namespace InternetConnectionScheduler
                     {
                         Thread.Sleep(200);
                         TimeOnly now = TimeOnly.Parse(DateTime.Now.ToLongTimeString());
-                        var query = new SelectQuery("Win32_NetworkAdapter");
                         if (_rule.Start == _rule.End) continue;
                         try
-                        {
-                            using (var searcher = new ManagementObjectSearcher(query))
+                        { 
+                            //NETSH
+                            if (NetworkInterface.GetIsNetworkAvailable() && CheckTime(_rule, now))
                             {
-                                if (CheckTime(_rule, now))
+                                var interfaces = GetAllInterfaces();
+                                foreach (var iface in interfaces)
                                 {
-                                    foreach (ManagementObject obj in searcher.Get())
-                                    {
-                                        if (obj["NetEnabled"] != null)
-                                        {
-                                            Disable(obj);
-                                        }
-                                    }
+                                    Disable(iface);
                                 }
-                                else
+                            }
+                            else if (!NetworkInterface.GetIsNetworkAvailable() && !CheckTime(_rule, now))
+                            {
+                                var interfaces = GetAllInterfaces();
+                                foreach (var iface in interfaces)
                                 {
-                                    foreach (ManagementObject obj in searcher.Get())
-                                    {
-                                        if (obj["NetEnabled"] != null && !(bool)obj["NetEnabled"])
-                                        {
-                                            Enable(obj);
-                                        }
-                                    }
+                                    Enable(iface);
                                 }
                             }
                         }
@@ -108,6 +101,60 @@ namespace InternetConnectionScheduler
                     }
                 });
             }
+        }
+
+        private Process CreateProcess(string name, string arg)
+        {
+            Process process = new Process();
+            process.StartInfo.FileName = name;
+            process.StartInfo.Arguments = arg;
+            process.StartInfo.Verb = "runas";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+            return process;
+        }
+
+        private void Enable(string ifaceName)
+        {
+            var process = CreateProcess("netsh", "interface set interface \"" + ifaceName + "\" enable");
+            process.Start();
+            process.WaitForExit();
+        }
+
+        private void Disable(string ifaceName)
+        {
+            var process = CreateProcess("netsh", "interface set interface \"" + ifaceName + "\" disable");
+            process.Start();
+            Console.WriteLine(process.StandardOutput.ReadToEnd());
+            process.WaitForExit();
+        }
+
+        private List<string> GetAllInterfaces()
+        {
+            List<string> interfaces = new List<string>();
+
+            var process = CreateProcess("netsh", "interface show interface");
+            process.Start();
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+
+            string[] lines = output.Split('\n');
+
+            foreach (var line in lines)
+            {
+                if (!line.Contains("State") && line.Length > 0)
+                {
+                    string[] columns = Regex.Split(line.Trim(), @"\s{2,}");
+                    if (columns.Length > 3)
+                    {
+                        string adapterName = columns[^1];
+                        interfaces.Add(adapterName);
+                    }
+                }
+            }
+
+            return interfaces;
         }
 
         private bool CheckTime(Rule p, TimeOnly now) => (now <= p.End && now >= p.Start) || (now >= p.Start && p.Start >= p.End) || (now <= p.End && p.End <= p.Start);
